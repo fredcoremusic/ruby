@@ -2771,6 +2771,10 @@ make_zombie(rb_objspace_t *objspace, VALUE obj, void (*dfree)(void *), void *dat
     zombie->data = data;
     zombie->next = heap_pages_deferred_final;
     heap_pages_deferred_final = (VALUE)zombie;
+
+    struct heap_page *page = GET_HEAP_PAGE(obj);
+    page->final_objects++;
+    heap_pages_final_objects++;
 }
 
 static inline void
@@ -3686,11 +3690,12 @@ finalize_list(rb_objspace_t *objspace, VALUE zombie)
         }
 
 	RZOMBIE(zombie)->basic.flags = 0;
-
-        if (LIKELY(heap_pages_final_objects)) heap_pages_final_objects--;
-        page->final_objects--;
-        heap_page_add_freeobj(objspace, GET_HEAP_PAGE(zombie), zombie);
-        page->free_slots += maybe_free_garbage_for(objspace, zombie) + 1;
+        GC_ASSERT(heap_pages_final_objects > 0);
+        GC_ASSERT(page->final_objects > 0);
+        heap_pages_final_objects--;
+	page->final_objects--;
+	    page->free_slots += maybe_free_garbage_for(objspace, zombie) + 1;
+	heap_page_add_freeobj(objspace, GET_HEAP_PAGE(zombie), zombie);
 
 	objspace->profile.total_freed_objects++;
 
@@ -4542,8 +4547,6 @@ gc_page_sweep(rb_objspace_t *objspace, rb_heap_t *heap, struct heap_page *sweep_
 
     sweep_page->free_slots = freed_slots + empty_slots;
     objspace->profile.total_freed_objects += freed_objects;
-    heap_pages_final_objects += final_objects;
-    sweep_page->final_objects += final_objects;
 
     if (heap_pages_deferred_final && !finalizing) {
         rb_thread_t *th = GET_THREAD();
